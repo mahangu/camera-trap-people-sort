@@ -3,17 +3,17 @@ Command-line interface for sorting camera trap images by number of people detect
 Uses multiple AI models for improved accuracy and uncertainty handling.
 """
 
-from pathlib import Path
+import argparse
 import shutil
 from datetime import datetime
+from pathlib import Path
+
 import torch
-import numpy as np
+import torchvision.transforms as T
 from PIL import Image
-from ultralytics import YOLO
 from PytorchWildlife.models.detection.ultralytics_based.megadetectorv6 import MegaDetectorV6
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
-import torchvision.transforms as T
-import argparse
+from ultralytics import YOLO
 
 MODEL_DESCRIPTIONS = {
     "yolo": "YOLOv8x - Fast and accurate general object detection",
@@ -94,7 +94,14 @@ def parse_args(args=None) -> argparse.Namespace:
         parsed_args.use_megadetector = not parsed_args.no_megadetector
         parsed_args.use_frcnn = not parsed_args.no_frcnn
 
-    if not any([parsed_args.use_yolo, parsed_args.use_pose, parsed_args.use_megadetector, parsed_args.use_frcnn]):
+    if not any(
+        [
+            parsed_args.use_yolo,
+            parsed_args.use_pose,
+            parsed_args.use_megadetector,
+            parsed_args.use_frcnn,
+        ]
+    ):
         print("Warning: All models were disabled. Using YOLOv8x as fallback.")
         parsed_args.use_yolo = True
 
@@ -258,15 +265,15 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_names = "_".join(sorted(models.keys()))
 
-    print(f"\nActive Models:")
+    print("\nActive Models:")
     for model_name in models.keys():
         print(f"- {model_name}: {MODEL_DESCRIPTIONS[model_name]}")
 
-    print(f"\nConfidence Settings:")
+    print("\nConfidence Settings:")
     print(f"- Detection threshold: {args.confidence}")
     print(f"- Minimum confidence: {args.min_confidence}")
 
-    print(f"\nPaths:")
+    print("\nPaths:")
     print(f"- Input: {input_path.absolute()}")
     print(f"- Output: {Path(args.output_path).absolute()}")
     print(f"- Recursive: {'Yes' if args.recursive else 'No'}")

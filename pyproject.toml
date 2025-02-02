@@ -53,6 +53,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.2.0",
+    "pre-commit>=3.6.0",
 ]
 
 [tool.black]
@@ -63,6 +64,8 @@ include = '\.pyi?$'
 [tool.ruff]
 line-length = 100
 target-version = "py38"
+
+[tool.ruff.lint]
 select = ["E", "F", "B", "I", "UP"]
 ignore = []
 
@@ -74,4 +77,4 @@ testpaths = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/camera_trap_people_sort"] 
+packages = ["src/camera_trap_people_sort"]
