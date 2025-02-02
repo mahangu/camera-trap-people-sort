@@ -281,29 +281,82 @@ def main():
     print("\nProcessing images...")
     print("-" * 50)
 
-    # Use recursive glob if -r flag is set, otherwise just search current directory
-    input_dir = Path(args.input_path)
-    image_files = []
+    # Convert input path to absolute Path object and resolve any special characters
+    input_dir = Path(args.input_path).resolve()
+    if not input_dir.exists():
+        print(f"Error: Input directory '{input_dir}' does not exist")
+        return
+    if not input_dir.is_dir():
+        print(f"Error: '{input_dir}' is not a directory")
+        return
 
+    image_files = []
     # Match both upper and lowercase extensions, handle spaces in filenames
     extensions = ["*.jpg", "*.jpeg", "*.JPG", "*.JPEG"]
 
+    print(f"Searching for images in: {input_dir}")
+
+    # Debug: List all files in directory first
+    print("\nDebug: Directory contents:")
+    try:
+        for item in input_dir.iterdir():
+            print(f"  {item.name}")
+    except Exception as e:
+        print(f"Error listing directory: {e}")
+
     if args.recursive:
         for ext in extensions:
-            image_files.extend(input_dir.rglob(ext))
+            try:
+                found = list(input_dir.rglob(ext))
+                print(f"\nFound {len(found)} files with pattern {ext}:")
+                for f in found:
+                    print(f"  {f.relative_to(input_dir)}")
+                image_files.extend(found)
+            except Exception as e:
+                print(f"Error searching for {ext}: {e}")
     else:
         for ext in extensions:
-            image_files.extend(input_dir.glob(ext))
+            try:
+                found = list(input_dir.glob(ext))
+                print(f"\nFound {len(found)} files with pattern {ext}:")
+                for f in found:
+                    print(f"  {f.relative_to(input_dir)}")
+                image_files.extend(found)
+            except Exception as e:
+                print(f"Error searching for {ext}: {e}")
 
     if not image_files:
-        print(f"No JPEG images found in {input_dir.absolute()}")
-        return
+        print(f"\nNo JPEG images found in {input_dir}")
+        print("Note: Supported extensions are: .jpg, .jpeg, .JPG, .JPEG")
+        print("\nTrying alternative search method...")
+        # Try a more permissive search
+        try:
+            all_files = list(input_dir.rglob("*") if args.recursive else input_dir.glob("*"))
+            jpeg_files = [
+                f for f in all_files if f.is_file() and f.suffix.lower() in [".jpg", ".jpeg"]
+            ]
+            if jpeg_files:
+                print(f"\nFound {len(jpeg_files)} JPEG files using alternative method:")
+                for f in jpeg_files:
+                    print(f"  {f.relative_to(input_dir)}")
+                image_files = jpeg_files
+            else:
+                print("Still no JPEG files found.")
+                return
+        except Exception as e:
+            print(f"Error in alternative search: {e}")
+            return
 
-    print(f"Found {len(image_files)} images to process")
+    print(f"\nFound {len(image_files)} total images to process")
+
+    # Create output directory as subdirectory of input path if not specified absolutely
+    output_path = Path(args.output_path)
+    if not output_path.is_absolute():
+        output_path = input_dir / output_path
 
     for image_path in image_files:
         try:
-            print(f"\nProcessing {image_path.relative_to(input_path)}...")
+            print(f"\nProcessing {image_path.relative_to(input_dir)}...")
             count, is_uncertain, scores = process_image(
                 image_path, models, args.confidence, args.min_confidence
             )
