@@ -282,7 +282,7 @@ def main():
     print("-" * 50)
 
     # Use recursive glob if -r flag is set, otherwise just search current directory
-    glob_pattern = "**/*.jp*g" if args.recursive else "*.jp*g"
+    glob_pattern = "**/*.[jJ][pP][eE]?[gG]" if args.recursive else "*.[jJ][pP][eE]?[gG]"
     for image_path in input_path.glob(glob_pattern):
         try:
             print(f"\nProcessing {image_path.relative_to(input_path)}...")
