@@ -282,8 +282,26 @@ def main():
     print("-" * 50)
 
     # Use recursive glob if -r flag is set, otherwise just search current directory
-    glob_pattern = "**/*.[jJ][pP][eE]?[gG]" if args.recursive else "*.[jJ][pP][eE]?[gG]"
-    for image_path in input_path.glob(glob_pattern):
+    input_dir = Path(args.input_path)
+    image_files = []
+
+    # Match both upper and lowercase extensions, handle spaces in filenames
+    extensions = ["*.jpg", "*.jpeg", "*.JPG", "*.JPEG"]
+
+    if args.recursive:
+        for ext in extensions:
+            image_files.extend(input_dir.rglob(ext))
+    else:
+        for ext in extensions:
+            image_files.extend(input_dir.glob(ext))
+
+    if not image_files:
+        print(f"No JPEG images found in {input_dir.absolute()}")
+        return
+
+    print(f"Found {len(image_files)} images to process")
+
+    for image_path in image_files:
         try:
             print(f"\nProcessing {image_path.relative_to(input_path)}...")
             count, is_uncertain, scores = process_image(
