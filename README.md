@@ -17,13 +17,22 @@ A tool to sort camera trap images by the number of people detected in them, usin
 
 ## Installation
 
+Install from GitHub (latest development version):
 ```bash
-pipx install camera-trap-people-sort
+pipx install git+https://github.com/mahangu/camera-trap-people-sort.git
 ```
 
-Or with pip:
+Note: If you don't have pipx installed, you can install it with:
+
+**macOS (using Homebrew):**
 ```bash
-pip install camera-trap-people-sort
+brew install pipx
+```
+
+**Other platforms:**
+```bash
+python -m pip install --user pipx
+python -m pipx ensurepath
 ```
 
 ## Usage
