@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "camera-trap-people-sort"
+version = "0.1.0"
+authors = [
+  { name="Mahangu Weerasinghe" },
+]
+description = "Sort camera trap images by number of people detected using multiple AI models"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "ultralytics>=8.3.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "PytorchWildlife>=0.4.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/mahangu/camera-trap-people-sort"
+"Bug Tracker" = "https://github.com/mahangu/camera-trap-people-sort/issues"
+
+[project.scripts]
+camera-trap-people-sort = "camera_trap_people_sort.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.1.1",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py38']
+include = '\.pyi?$'
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --cov=camera_trap_people_sort"
+testpaths = [
+    "test",
+] 
