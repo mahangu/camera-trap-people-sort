@@ -107,6 +107,29 @@ def process_single_image(args):
         return True, image_path, count, is_uncertain, None
 
     except Exception as e:
+        # Create failed directory and copy the failed image
+        failed_dir = ensure_output_dir(
+            "failed",
+            timestamp,
+            uncertain=False,
+            models=PROCESS_MODELS,
+            base_path=base_path,
+        )
+        try:
+            shutil.copy2(image_path, failed_dir / image_path.name)
+            # Write error to a log file in the failed directory
+            error_log_path = failed_dir / "errors.log"
+            with open(error_log_path, "a") as f:
+                f.write(f"{image_path.name}: {str(e)}\n")
+        except Exception as copy_error:
+            # If we can't even copy the file, append that to the error
+            return (
+                False,
+                image_path,
+                None,
+                None,
+                f"{str(e)} (Additionally, failed to copy to failed dir: {str(copy_error)})",
+            )
         return False, image_path, None, None, str(e)
 
 
@@ -444,6 +467,7 @@ def main():
     failed = 0
     uncertain_count = 0
     people_counts = {}
+    failed_images = []
 
     print("\nProcessing Summary:")
     for success, image_path, count, is_uncertain, error in results:
@@ -457,7 +481,7 @@ def main():
                 people_counts[count] = people_counts.get(count, 0) + 1
         else:
             failed += 1
-            print(f"Error processing {image_path}: {error}")
+            failed_images.append((image_path, error))
 
     print(f"\nSuccessfully processed: {successful} images")
     print(f"Uncertain detections: {uncertain_count}")
@@ -469,8 +493,18 @@ def main():
 
     if failed > 0:
         print(f"\nFailed to process: {failed} images")
+        print("Failed images have been copied to the 'failed' directory")
+        print("See errors.log in the failed directory for detailed error messages")
+        # Print the first few errors as examples
+        if failed_images:
+            print("\nExample errors (first 3):")
+            for img, err in failed_images[:3]:
+                print(f"- {img.name}: {err}")
 
-    print(f"\nResults are in {Path(args.output_path) / f'{timestamp}_{model_names}'}")
+    output_dir = Path(args.output_path) / f"{timestamp}_{model_names}"
+    print(f"\nResults are in {output_dir}")
+    if failed > 0:
+        print(f"Failed images and error log are in {output_dir}/failed")
 
 
 if __name__ == "__main__":
