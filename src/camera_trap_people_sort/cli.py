@@ -8,6 +8,7 @@ import logging
 import shutil
 import sys
 import warnings
+from collections import Counter
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
@@ -16,6 +17,7 @@ import torch
 import torchvision.transforms as T
 from PIL import Image
 from PytorchWildlife.models.detection.ultralytics_based.megadetectorv6 import MegaDetectorV6
+from tabulate import tabulate
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
 from tqdm.auto import tqdm
 from ultralytics import YOLO
@@ -90,10 +92,12 @@ def process_single_image(args):
             dest_dir = ensure_output_dir(
                 count, timestamp, uncertain=True, models=PROCESS_MODELS, base_path=base_path
             )
+            dest_category = "uncertain"
         elif count > 0:
             dest_dir = ensure_output_dir(
                 count, timestamp, uncertain=False, models=PROCESS_MODELS, base_path=base_path
             )
+            dest_category = str(count)
         else:
             dest_dir = ensure_output_dir(
                 "no_people",
@@ -102,9 +106,10 @@ def process_single_image(args):
                 models=PROCESS_MODELS,
                 base_path=base_path,
             )
+            dest_category = "no_people"
 
         shutil.copy2(image_path, dest_dir / image_path.name)
-        return True, image_path, count, is_uncertain, None
+        return True, image_path, count, is_uncertain, None, dest_category
 
     except Exception as e:
         # Create failed directory and copy the failed image
@@ -129,8 +134,9 @@ def process_single_image(args):
                 None,
                 None,
                 f"{str(e)} (Additionally, failed to copy to failed dir: {str(copy_error)})",
+                None,
             )
-        return False, image_path, None, None, str(e)
+        return False, image_path, None, None, str(e), "failed"
 
 
 def parse_args(args=None) -> argparse.Namespace:
@@ -468,9 +474,10 @@ def main():
     uncertain_count = 0
     people_counts = {}
     failed_images = []
+    file_movements = Counter()
 
     print("\nProcessing Summary:")
-    for success, image_path, count, is_uncertain, error in results:
+    for success, image_path, count, is_uncertain, error, dest_category in results:
         if success:
             successful += 1
             if is_uncertain:
@@ -482,6 +489,10 @@ def main():
         else:
             failed += 1
             failed_images.append((image_path, error))
+
+        # Track where each file was moved
+        if dest_category is not None:
+            file_movements[dest_category] += 1
 
     print(f"\nSuccessfully processed: {successful} images")
     print(f"Uncertain detections: {uncertain_count}")
@@ -505,6 +516,67 @@ def main():
     print(f"\nResults are in {output_dir}")
     if failed > 0:
         print(f"Failed images and error log are in {output_dir}/failed")
+
+    # Print detailed file movement summary as a table
+    print("\nFile Movement Summary:")
+    table_data = []
+    total_moved = sum(file_movements.values())
+
+    # Add regular categories first
+    for category, count in sorted(file_movements.items()):
+        if category != "failed":
+            category_display = f"{category} people" if category.isdigit() else category
+            percentage = (count / total_moved) * 100 if total_moved > 0 else 0
+            table_data.append([category_display, count, f"{percentage:.1f}%"])
+
+    # Add failed category last if it exists
+    if "failed" in file_movements:
+        failed_count = file_movements["failed"]
+        failed_percentage = (failed_count / total_moved) * 100 if total_moved > 0 else 0
+        table_data.append(["failed", failed_count, f"{failed_percentage:.1f}%"])
+
+    # Add total row
+    table_data.append(["Total", total_moved, "100.0%"])
+
+    # Print the table
+    print(
+        tabulate(
+            table_data,
+            headers=["Category", "Files", "Percentage"],
+            tablefmt="grid",
+            numalign="right",
+        )
+    )
+
+    # Validation checks
+    print("\nValidation Checks:")
+    validation_errors = []
+
+    # Check if total files processed matches input files
+    if total_moved != total_images:
+        validation_errors.append(
+            f"Total files moved ({total_moved}) doesn't match input files ({total_images})"
+        )
+
+    # Check if successful + failed matches total
+    if successful + failed != total_images:
+        validation_errors.append(
+            f"Success ({successful}) + Failed ({failed}) doesn't match total ({total_images})"
+        )
+
+    # Check if file_movements total matches successful + failed
+    movement_total = sum(file_movements.values())
+    if movement_total != total_images:
+        validation_errors.append(
+            f"Total moved files ({movement_total}) doesn't match total images ({total_images})"
+        )
+
+    if validation_errors:
+        print("\nWarning: Found inconsistencies in file counts:")
+        for error in validation_errors:
+            print(f"- {error}")
+    else:
+        print("✓ All file counts match")
 
 
 if __name__ == "__main__":
