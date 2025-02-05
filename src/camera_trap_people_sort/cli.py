@@ -381,7 +381,16 @@ def main():
                 shutil.copy2(image_path, dest_dir / image_path.name)
                 print(f"Copied to {dest_dir}/")
             else:
-                print("No people detected")
+                print(f"Found no people in {image_path.name}")
+                dest_dir = ensure_output_dir(
+                    "no_people",
+                    timestamp,
+                    uncertain=False,
+                    models=models,
+                    base_path=args.output_path,
+                )
+                shutil.copy2(image_path, dest_dir / image_path.name)
+                print(f"Copied to {dest_dir}/")
 
         except Exception as e:
             print(f"Error processing {image_path}: {e}")
