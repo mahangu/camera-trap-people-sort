@@ -4,8 +4,12 @@ Uses multiple AI models for improved accuracy and uncertainty handling.
 """
 
 import argparse
+import logging
 import shutil
+import sys
+import warnings
 from datetime import datetime
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import torch
@@ -13,7 +17,16 @@ import torchvision.transforms as T
 from PIL import Image
 from PytorchWildlife.models.detection.ultralytics_based.megadetectorv6 import MegaDetectorV6
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
+from tqdm.auto import tqdm
 from ultralytics import YOLO
+
+# Filter out specific warnings
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message=".*parameter .pretrained. is deprecated.*"
+)
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message=".*Arguments other than a weight enum.*"
+)
 
 MODEL_DESCRIPTIONS = {
     "yolo": "YOLOv8x - Fast and accurate general object detection",
@@ -21,6 +34,80 @@ MODEL_DESCRIPTIONS = {
     "megadetector": "MegaDetector V6 - Optimized for camera trap imagery",
     "frcnn": "Faster R-CNN - Highly accurate but slower general object detection",
 }
+
+# Global variables to store models in each process
+PROCESS_MODELS = {}
+
+
+def init_worker(model_config):
+    """Initialize worker process with models."""
+    global PROCESS_MODELS
+
+    # Suppress logging during model loading
+    logging.getLogger("ultralytics").setLevel(logging.WARNING)
+    sys.stdout = open("/dev/null", "w")  # Suppress stdout during model loading
+
+    # Determine device
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+
+    try:
+        if model_config.get("use_yolo"):
+            PROCESS_MODELS["yolo"] = YOLO("yolov8x.pt")
+            if device == "mps":
+                PROCESS_MODELS["yolo"].to(device)
+
+        if model_config.get("use_pose"):
+            PROCESS_MODELS["pose"] = YOLO("yolov8x-pose.pt")
+            if device == "mps":
+                PROCESS_MODELS["pose"].to(device)
+
+        if model_config.get("use_megadetector"):
+            PROCESS_MODELS["megadetector"] = MegaDetectorV6(
+                pretrained=True, version="MDV6-yolov9-e", device=device
+            )
+
+        if model_config.get("use_frcnn"):
+            PROCESS_MODELS["frcnn"] = fasterrcnn_resnet50_fpn_v2(pretrained=True)
+            if device == "mps":
+                PROCESS_MODELS["frcnn"].to(device)
+            PROCESS_MODELS["frcnn"].eval()
+
+    finally:
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+
+
+def process_single_image(args):
+    """Process a single image using pre-loaded models."""
+    image_path, confidence_threshold, min_confidence, timestamp, base_path = args
+    try:
+        count, is_uncertain, scores = process_image(
+            image_path, PROCESS_MODELS, confidence_threshold, min_confidence
+        )
+
+        # Handle file copying within the process
+        if is_uncertain:
+            dest_dir = ensure_output_dir(
+                count, timestamp, uncertain=True, models=PROCESS_MODELS, base_path=base_path
+            )
+        elif count > 0:
+            dest_dir = ensure_output_dir(
+                count, timestamp, uncertain=False, models=PROCESS_MODELS, base_path=base_path
+            )
+        else:
+            dest_dir = ensure_output_dir(
+                "no_people",
+                timestamp,
+                uncertain=False,
+                models=PROCESS_MODELS,
+                base_path=base_path,
+            )
+
+        shutil.copy2(image_path, dest_dir / image_path.name)
+        return True, image_path, count, is_uncertain, None
+
+    except Exception as e:
+        return False, image_path, None, None, str(e)
 
 
 def parse_args(args=None) -> argparse.Namespace:
@@ -106,32 +193,6 @@ def parse_args(args=None) -> argparse.Namespace:
         parsed_args.use_yolo = True
 
     return parsed_args
-
-
-def load_models(args: argparse.Namespace) -> dict:
-    """Load selected AI models based on command line arguments."""
-    models = {}
-
-    if args.use_yolo:
-        print("Loading YOLO model...")
-        models["yolo"] = YOLO("yolov8x.pt")
-
-    if args.use_pose:
-        print("Loading YOLOv8 Pose model...")
-        models["pose"] = YOLO("yolov8x-pose.pt")
-
-    if args.use_megadetector:
-        print("Loading MegaDetector V6 (YOLOv9-Extra)...")
-        models["megadetector"] = MegaDetectorV6(
-            pretrained=True, version="MDV6-yolov9-e", device="cpu"
-        )
-
-    if args.use_frcnn:
-        print("Loading Faster R-CNN...")
-        models["frcnn"] = fasterrcnn_resnet50_fpn_v2(pretrained=True)
-        models["frcnn"].eval()
-
-    return models
 
 
 def process_image(
@@ -258,15 +319,28 @@ def ensure_output_dir(
 
 def main():
     """Main entry point for the CLI application."""
+    # Suppress ultralytics logging
+    logging.getLogger("ultralytics").setLevel(logging.WARNING)
+
     args = parse_args()
-    models = load_models(args)
+
+    # Create a lightweight config dict instead of loading models
+    model_config = {
+        "use_yolo": args.use_yolo,
+        "use_pose": args.use_pose,
+        "use_megadetector": args.use_megadetector,
+        "use_frcnn": args.use_frcnn,
+    }
+
+    # Get list of selected models for display
+    selected_models = [k for k, v in model_config.items() if v]
+    model_names = "_".join(m.replace("use_", "") for m in selected_models)
 
     input_path = Path(args.input_path)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_names = "_".join(sorted(models.keys()))
 
     print("\nActive Models:")
-    for model_name in models.keys():
+    for model_name in [m.replace("use_", "") for m in selected_models]:
         print(f"- {model_name}: {MODEL_DESCRIPTIONS[model_name]}")
 
     print("\nConfidence Settings:")
@@ -278,9 +352,6 @@ def main():
     print(f"- Output: {Path(args.output_path).absolute()}")
     print(f"- Recursive: {'Yes' if args.recursive else 'No'}")
 
-    print("\nProcessing images...")
-    print("-" * 50)
-
     # Convert input path to absolute Path object and resolve any special characters
     input_dir = Path(args.input_path).resolve()
     if not input_dir.exists():
@@ -291,26 +362,16 @@ def main():
         return
 
     image_files = []
-    # Match both upper and lowercase extensions, handle spaces in filenames
     extensions = ["*.jpg", "*.jpeg", "*.JPG", "*.JPEG"]
 
     print(f"Searching for images in: {input_dir}")
-
-    # Debug: List all files in directory first
-    print("\nDebug: Directory contents:")
-    try:
-        for item in input_dir.iterdir():
-            print(f"  {item.name}")
-    except Exception as e:
-        print(f"Error listing directory: {e}")
 
     if args.recursive:
         for ext in extensions:
             try:
                 found = list(input_dir.rglob(ext))
-                print(f"\nFound {len(found)} files with pattern {ext}:")
-                for f in found:
-                    print(f"  {f.relative_to(input_dir)}")
+                if found:
+                    print(f"\nFound {len(found)} files with pattern {ext}")
                 image_files.extend(found)
             except Exception as e:
                 print(f"Error searching for {ext}: {e}")
@@ -318,9 +379,8 @@ def main():
         for ext in extensions:
             try:
                 found = list(input_dir.glob(ext))
-                print(f"\nFound {len(found)} files with pattern {ext}:")
-                for f in found:
-                    print(f"  {f.relative_to(input_dir)}")
+                if found:
+                    print(f"\nFound {len(found)} files with pattern {ext}")
                 image_files.extend(found)
             except Exception as e:
                 print(f"Error searching for {ext}: {e}")
@@ -329,16 +389,13 @@ def main():
         print(f"\nNo JPEG images found in {input_dir}")
         print("Note: Supported extensions are: .jpg, .jpeg, .JPG, .JPEG")
         print("\nTrying alternative search method...")
-        # Try a more permissive search
         try:
             all_files = list(input_dir.rglob("*") if args.recursive else input_dir.glob("*"))
             jpeg_files = [
                 f for f in all_files if f.is_file() and f.suffix.lower() in [".jpg", ".jpeg"]
             ]
             if jpeg_files:
-                print(f"\nFound {len(jpeg_files)} JPEG files using alternative method:")
-                for f in jpeg_files:
-                    print(f"  {f.relative_to(input_dir)}")
+                print(f"\nFound {len(jpeg_files)} JPEG files using alternative method")
                 image_files = jpeg_files
             else:
                 print("Still no JPEG files found.")
@@ -347,56 +404,72 @@ def main():
             print(f"Error in alternative search: {e}")
             return
 
-    print(f"\nFound {len(image_files)} total images to process")
+    total_images = len(image_files)
+    print(f"\nFound {total_images} total images to process")
 
-    # Create output directory as subdirectory of input path if not specified absolutely
-    output_path = Path(args.output_path)
-    if not output_path.is_absolute():
-        output_path = input_dir / output_path
+    # Determine optimal number of processes (leave 1 core free for system)
+    num_processes = max(1, cpu_count() - 1)
+    print(f"\nProcessing images using {num_processes} parallel processes...")
 
-    for image_path in image_files:
-        try:
-            print(f"\nProcessing {image_path.relative_to(input_dir)}...")
-            count, is_uncertain, scores = process_image(
-                image_path, models, args.confidence, args.min_confidence
+    # Prepare arguments for parallel processing (without model_config as it's handled in init)
+    process_args = [
+        (image_path, args.confidence, args.min_confidence, timestamp, args.output_path)
+        for image_path in image_files
+    ]
+
+    # Initialize the process pool with models
+    with Pool(num_processes, initializer=init_worker, initargs=(model_config,)) as pool:
+        # Use imap_unordered for potentially better performance
+        results = list(
+            tqdm(
+                pool.imap_unordered(process_single_image, process_args),
+                total=total_images,
+                desc="Processing images",
+                unit="img",
+                ncols=80,
+                position=0,
+                leave=True,
+                dynamic_ncols=False,  # Fixed width
+                ascii=True,  # Use ASCII characters for better compatibility
+                mininterval=0.5,  # Update interval in seconds
+                bar_format=(
+                    "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+                ),
             )
+        )
 
-            if scores:
-                print("Detection scores:")
-                for model, score in scores:
-                    print(f"  {model}: {score:.2f}")
+    # Report results
+    successful = 0
+    failed = 0
+    uncertain_count = 0
+    people_counts = {}
 
+    print("\nProcessing Summary:")
+    for success, image_path, count, is_uncertain, error in results:
+        if success:
+            successful += 1
             if is_uncertain:
-                print(f"Found {count} people in {image_path.name} (uncertain detection)")
-                dest_dir = ensure_output_dir(
-                    count, timestamp, uncertain=True, models=models, base_path=args.output_path
-                )
-                shutil.copy2(image_path, dest_dir / image_path.name)
-                print(f"Copied to {dest_dir}/")
-            elif count > 0:
-                print(f"Found {count} people in {image_path.name}")
-                dest_dir = ensure_output_dir(
-                    count, timestamp, uncertain=False, models=models, base_path=args.output_path
-                )
-                shutil.copy2(image_path, dest_dir / image_path.name)
-                print(f"Copied to {dest_dir}/")
+                uncertain_count += 1
+            elif count == "no_people":
+                people_counts["no_people"] = people_counts.get("no_people", 0) + 1
             else:
-                print(f"Found no people in {image_path.name}")
-                dest_dir = ensure_output_dir(
-                    "no_people",
-                    timestamp,
-                    uncertain=False,
-                    models=models,
-                    base_path=args.output_path,
-                )
-                shutil.copy2(image_path, dest_dir / image_path.name)
-                print(f"Copied to {dest_dir}/")
+                people_counts[count] = people_counts.get(count, 0) + 1
+        else:
+            failed += 1
+            print(f"Error processing {image_path}: {error}")
 
-        except Exception as e:
-            print(f"Error processing {image_path}: {e}")
+    print(f"\nSuccessfully processed: {successful} images")
+    print(f"Uncertain detections: {uncertain_count}")
+    print("\nPeople count distribution:")
+    if "no_people" in people_counts:
+        print(f"- No people: {people_counts['no_people']}")
+    for count in sorted(k for k in people_counts.keys() if k != "no_people"):
+        print(f"- {count} people: {people_counts[count]}")
 
-    print("\nProcessing complete!")
-    print(f"Results are in {Path(args.output_path) / f'{timestamp}_{model_names}'}")
+    if failed > 0:
+        print(f"\nFailed to process: {failed} images")
+
+    print(f"\nResults are in {Path(args.output_path) / f'{timestamp}_{model_names}'}")
 
 
 if __name__ == "__main__":
