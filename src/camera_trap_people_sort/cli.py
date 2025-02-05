@@ -68,8 +68,8 @@ def init_worker(model_config):
 
         if model_config.get("use_frcnn"):
             PROCESS_MODELS["frcnn"] = fasterrcnn_resnet50_fpn_v2(pretrained=True)
-            if device == "mps":
-                PROCESS_MODELS["frcnn"].to(device)
+            # Force CPU for FRCNN for stability
+            PROCESS_MODELS["frcnn"].to("cpu")
             PROCESS_MODELS["frcnn"].eval()
 
     finally:
@@ -287,6 +287,7 @@ def process_image_frcnn(model: torch.nn.Module, image_path: Path, min_confidence
     """Process image with Faster R-CNN to detect humans."""
     image = Image.open(image_path).convert("RGB")
     transform = T.Compose([T.ToTensor()])
+    # Keep tensor on CPU for FRCNN
     img_tensor = transform(image)
 
     with torch.no_grad():
