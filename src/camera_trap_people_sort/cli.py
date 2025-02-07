@@ -50,28 +50,32 @@ def init_worker(model_config):
     sys.stdout = open("/dev/null", "w")  # Suppress stdout during model loading
 
     # Determine device
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    mps_device = "mps" if torch.backends.mps.is_available() else "cpu"
 
     try:
         if model_config.get("use_yolo"):
             PROCESS_MODELS["yolo"] = YOLO("yolov8x.pt")
-            if device == "mps":
-                PROCESS_MODELS["yolo"].to(device)
+            if mps_device == "mps":
+                PROCESS_MODELS["yolo"].to(mps_device)
 
         if model_config.get("use_pose"):
             PROCESS_MODELS["pose"] = YOLO("yolov8x-pose.pt")
-            if device == "mps":
-                PROCESS_MODELS["pose"].to(device)
+            if mps_device == "mps":
+                PROCESS_MODELS["pose"].to(mps_device)
 
         if model_config.get("use_megadetector"):
             PROCESS_MODELS["megadetector"] = MegaDetectorV6(
-                pretrained=True, version="MDV6-yolov9-e", device=device
+                pretrained=True, version="MDV6-yolov9-e", device=mps_device
             )
 
         if model_config.get("use_frcnn"):
+            print("Loading Faster R-CNN (optimized for MPS)...")
             PROCESS_MODELS["frcnn"] = fasterrcnn_resnet50_fpn_v2(pretrained=True)
-            # Force CPU for FRCNN for stability
-            PROCESS_MODELS["frcnn"].to("cpu")
+            if mps_device == "mps":
+                # Set thread count for FRCNN on MPS
+                torch.set_num_threads(2)  # Reduce CPU thread usage
+                torch.mps.set_per_process_memory_fraction(0.3)  # Limit MPS memory usage
+                PROCESS_MODELS["frcnn"].to(mps_device)
             PROCESS_MODELS["frcnn"].eval()
 
     finally:
@@ -316,11 +320,19 @@ def process_image_frcnn(model: torch.nn.Module, image_path: Path, min_confidence
     """Process image with Faster R-CNN to detect humans."""
     image = Image.open(image_path).convert("RGB")
     transform = T.Compose([T.ToTensor()])
-    # Keep tensor on CPU for FRCNN
     img_tensor = transform(image)
+
+    # Move to same device as model, with memory management
+    if model.device.type == "mps":
+        # Clear MPS cache before processing
+        if hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
+        img_tensor = img_tensor.to(model.device)
 
     with torch.no_grad():
         prediction = model([img_tensor])
+        # Move prediction to CPU immediately to free GPU memory
+        prediction = [{k: v.cpu() for k, v in p.items()} for p in prediction]
 
     return [
         score.item()
