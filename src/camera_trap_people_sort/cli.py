@@ -437,12 +437,6 @@ def main():
     total_images = len(image_files)
     print(f"\nFound {total_images} total images to process")
 
-    # Filter out any files that are in the output directory
-    output_dir = Path(args.output_path).resolve()
-    filtered_image_files = [f for f in image_files if not str(f).startswith(str(output_dir))]
-    total_to_process = len(filtered_image_files)
-    print(f"Excluding {total_images - total_to_process} images that are in the output directory")
-
     # Determine optimal number of processes (leave 1 core free for system)
     num_processes = max(1, cpu_count() - 1)
     print(f"\nProcessing images using {num_processes} parallel processes...")
@@ -450,7 +444,7 @@ def main():
     # Prepare arguments for parallel processing (without model_config as it's handled in init)
     process_args = [
         (image_path, args.confidence, args.min_confidence, timestamp, args.output_path)
-        for image_path in filtered_image_files
+        for image_path in image_files
     ]
 
     # Initialize the process pool with models
@@ -459,7 +453,7 @@ def main():
         results = list(
             tqdm(
                 pool.imap_unordered(process_single_image, process_args),
-                total=total_to_process,
+                total=total_images,
                 desc="Processing images",
                 unit="img",
                 ncols=80,
