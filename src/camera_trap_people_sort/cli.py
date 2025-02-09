@@ -82,6 +82,52 @@ def init_worker(model_config):
 def process_single_image(args):
     """Process a single image using pre-loaded models."""
     image_path, confidence_threshold, min_confidence, timestamp, base_path = args
+
+    # First check if file exists and is readable
+    if not image_path.exists():
+        cant_read_dir = ensure_output_dir(
+            "cant_read",
+            timestamp,
+            uncertain=False,
+            models=PROCESS_MODELS,
+            base_path=base_path,
+        )
+        # Log the error
+        error_log_path = cant_read_dir / "errors.log"
+        with open(error_log_path, "a") as f:
+            f.write(f"{image_path.name}: File does not exist\n")
+        return False, image_path, None, None, "File does not exist", "cant_read"
+
+    # Try to verify the image is readable
+    try:
+        with Image.open(image_path) as img:
+            img.verify()  # Verify the image is valid
+    except Exception as e:
+        cant_read_dir = ensure_output_dir(
+            "cant_read",
+            timestamp,
+            uncertain=False,
+            models=PROCESS_MODELS,
+            base_path=base_path,
+        )
+        try:
+            shutil.copy2(image_path, cant_read_dir / image_path.name)
+            # Log the error
+            error_log_path = cant_read_dir / "errors.log"
+            with open(error_log_path, "a") as f:
+                f.write(f"{image_path.name}: {str(e)}\n")
+        except Exception as copy_error:
+            return (
+                False,
+                image_path,
+                None,
+                None,
+                f"Can't read image: {str(e)} (Copy failed: {str(copy_error)})",
+                "cant_read",
+            )
+        return False, image_path, None, None, f"Can't read image: {str(e)}", "cant_read"
+
+    # Process valid image
     try:
         count, is_uncertain, scores = process_image(
             image_path, PROCESS_MODELS, confidence_threshold, min_confidence
@@ -122,19 +168,17 @@ def process_single_image(args):
         )
         try:
             shutil.copy2(image_path, failed_dir / image_path.name)
-            # Write error to a log file in the failed directory
             error_log_path = failed_dir / "errors.log"
             with open(error_log_path, "a") as f:
                 f.write(f"{image_path.name}: {str(e)}\n")
         except Exception as copy_error:
-            # If we can't even copy the file, append that to the error
             return (
                 False,
                 image_path,
                 None,
                 None,
                 f"{str(e)} (Additionally, failed to copy to failed dir: {str(copy_error)})",
-                None,
+                "failed",
             )
         return False, image_path, None, None, str(e), "failed"
 
